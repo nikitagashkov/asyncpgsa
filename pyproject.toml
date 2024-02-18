@@ -46,7 +46,7 @@ dependencies = [
     "ruff",
     "pytest",
     "pytest-asyncio",
-    "sqlalchemy >=1.4",  # XXX: >=2.0?
+    "sqlalchemy >=1.4",
 ]
 [tool.hatch.envs.default.scripts]
 test = "pytest ./tests -s -vvv --log-level=DEBUG"
@@ -59,8 +59,16 @@ lint = [
     "ruff --fix asyncpgsa docs tests",
 ]
 
+[tool.hatch.envs.test]
+matrix-name-format = "{variable}{value}"
+overrides.matrix.sqlalchemy.dependencies = [
+    { value = "sqlalchemy ~=1.4", if = ["1.4"] },
+    { value = "sqlalchemy ~=2.0", if = ["2.0"] },
+]
+
 [[tool.hatch.envs.test.matrix]]
 python = ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12"]
+sqlalchemy = ["1.4", "2.0"]
 
 [tool.ruff.lint]
 # For reference, see https://docs.astral.sh/ruff/rules/

@@ -33,7 +33,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # XXX: Pretty ugly, better way to do this?
         python-version: [ "3.7", "3.8", "3.9", "3.10", "3.11", "3.12" ]
+        sqlalchemy-version: ["2.0"]
+        include:
+          - python-version: "3.7"
+            sqlalchemy-version: "1.4"
 
     services:
       postgres:
@@ -59,14 +64,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
+      # XXX: Almost sure there's a better way to do this
+      - name: Set $HATCH_ENV
+        run: echo "HATCH_ENV=test.py${{ matrix.python-version }}-sqlalchemy${{ matrix.sqlalchemy-version }}" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: |
           pip install -U pip
           pip install hatch
-          hatch run +py=${{ matrix.python-version }} test:true  # So that hatch syncs dependencies
+          hatch run true # So that hatch syncs dependencies
 
       - name: Run tests
-        run: hatch run +py=${{ matrix.python-version }} test:test
+        run: hatch run test
         env:
           DB_USER: "postgres"
           DB_PASS: "postgres"

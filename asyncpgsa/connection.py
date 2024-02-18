@@ -1,12 +1,15 @@
 from asyncpg import connection
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import asyncpg
+from sqlalchemy.sql.ddl import DDLElement
 
 from .log import query_logger
 
 
 def get_dialect(**kwargs):
-    dialect = asyncpg.dialect(paramstyle="numeric_dollar", **kwargs)
+    # TODO: Migrate to `paramstyle="numeric_dollar"` after dropping support for
+    # SQLAlchemy 1.4.
+    dialect = asyncpg.dialect(paramstyle="pyformat", **kwargs)
     return dialect
 
 
@@ -50,13 +53,20 @@ def compile_query(query, dialect=_dialect, inline=False):
         compile_kwargs={"render_postcompile": True},
     )
 
-    query_logger.debug(compiled.string)
-    # `compiled.compile_state._no_parameters` means bare `update()` or `insert()`.
-
-    if compiled.is_ddl:
+    # TODO: Check via `compiled.is_ddl` after dropping support for SQLAlchemy
+    # 1.4.
+    if isinstance(query, DDLElement):
+        query_logger.debug(compiled.string)
         return compiled.string, ()
 
     params = execute_defaults(compiled)  # Default values for Insert/Update.
+
+    # TODO: Remove this after dropping support for SQLAlchemy 1.4 and using
+    # `paramstyle="numeric_dollar"`.
+    pyformat_to_numeric_dollar = {
+        key: f"${idx}" for idx, key in enumerate(params.keys(), start=1)
+    }
+    new_query = compiled.string % pyformat_to_numeric_dollar
 
     # Respect custom `TypeAdapters`. XXX: Why `query.compile` doesn't do this?
     # XXX: `_bind_processors` does not resemble public API. Is there a better
@@ -71,11 +81,13 @@ def compile_query(query, dialect=_dialect, inline=False):
         for key, val in params.items()
     ]
 
+    query_logger.debug(new_query)
+
     if inline:
-        return compiled.string
+        return new_query
 
     # FIXME: Should return `tuple`, not `list`.
-    return compiled.string, new_params
+    return new_query, new_params
 
 
 class SAConnection(connection.Connection):

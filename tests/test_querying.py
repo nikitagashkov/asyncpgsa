@@ -100,7 +100,13 @@ def test_querying_table(metadata):
         Column("t_datetime", types.DateTime()),
         Column("t_date", types.DateTime()),
         Column("t_interval", types.Interval()),
-        Column("uniq_uuid", PG_UUID, nullable=False, unique=True, default=uuid4),
+        Column(
+            "uniq_uuid",
+            PG_UUID(as_uuid=True),
+            nullable=False,
+            unique=True,
+            default=uuid4,
+        ),
     )
 
 

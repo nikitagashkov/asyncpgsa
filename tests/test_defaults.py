@@ -7,6 +7,7 @@ from sqlalchemy import Column, MetaData, Sequence, Table, types
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 from asyncpgsa import connection
+from tests.compat import strip_bind_casts_if_lt_sa20
 
 metadata = MetaData()
 
@@ -39,7 +40,7 @@ def t_date_default_func():
 users = Table(
     "users",
     metadata,
-    Column("id", PG_UUID, unique=True, default=uuid4),
+    Column("id", PG_UUID(as_uuid=True), unique=True, default=uuid4),
     Column("serial", types.Integer, serial_default),
     Column("name", types.String(60), nullable=False, default=name_default),
     Column(
@@ -60,7 +61,7 @@ users = Table(
     Column("t_date_2", types.DateTime(), nullable=False, default=t_date_default_func),
     Column("t_interval", types.Interval(), nullable=False, default=t_interval_default),
     Column("t_boolean", types.Boolean(), nullable=False, default=True),
-    Column("version", PG_UUID, default=uuid4, onupdate=uuid4),
+    Column("version", PG_UUID(as_uuid=True), default=uuid4, onupdate=uuid4),
 )
 
 
@@ -79,7 +80,7 @@ def test_insert_query_defaults():
 
     assert (
         new_query
-        == (
+        == strip_bind_casts_if_lt_sa20(
             "INSERT INTO users ("
             "id, "
             "serial, "
@@ -139,7 +140,7 @@ def test_insert_query_defaults_override():
     )
     new_query, new_params = connection.compile_query(query)
 
-    assert new_query == (
+    assert new_query == strip_bind_casts_if_lt_sa20(
         "INSERT INTO users ("
         "id, "
         "serial, "
@@ -218,7 +219,7 @@ def test_update_query():
     )
     new_query, new_params = connection.compile_query(query)
 
-    assert new_query == (
+    assert new_query == strip_bind_casts_if_lt_sa20(
         "UPDATE users SET "
         "serial=$1::INTEGER, "
         "name=$2::VARCHAR, "
