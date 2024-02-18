@@ -32,7 +32,8 @@ SAMPLE_DATA = [
         "t_datetime": None,
         "t_date": None,
         "t_interval": None,
-        "uniq_uuid": None,
+        # NB! Behavior changed. Before, passing `None` to field with default
+        # would trigger the default. Now, `None` passed as is.
     },
     {
         "t_string": "test3",
@@ -117,17 +118,17 @@ def create_test_querying_table(test_querying_table, connection, event_loop):
 
     """
 
-    async def create_enum(enum_cls):
+    async def recreate_enum(enum_cls):
+        await connection.execute(f"DROP TYPE IF EXISTS {enum_cls.__name__.lower()}")
         labels = [f"'{e.value}'" for e in enum_cls]  # Enum labels are always strings
         await connection.execute(
             f"CREATE TYPE {enum_cls.__name__.lower()} " f"AS ENUM ({', '.join(labels)})"
         )
 
-    async def drop_enum(enum_cls):
-        await connection.execute(f"DROP TYPE {enum_cls.__name__.lower()}")
-
-    event_loop.run_until_complete(create_enum(MyEnum))
-    event_loop.run_until_complete(create_enum(MyIntEnum))
+    # FIXME: Looks bad and cleanup doesn't always work (e.g., if we failed to
+    # drop table, the rest won't be dropped).
+    event_loop.run_until_complete(recreate_enum(MyEnum))
+    event_loop.run_until_complete(recreate_enum(MyIntEnum))
     event_loop.run_until_complete(
         connection.execute(CreateSequence(Sequence("serial_seq")))
     )
@@ -141,13 +142,11 @@ def create_test_querying_table(test_querying_table, connection, event_loop):
         event_loop.run_until_complete(
             connection.execute(DropSequence(Sequence("serial_seq")))
         )
-        event_loop.run_until_complete(drop_enum(MyIntEnum))
-        event_loop.run_until_complete(drop_enum(MyEnum))
 
 
 async def test_fetch_list(test_querying_table, connection):
     for sample_item in SAMPLE_DATA:
-        query = test_querying_table.insert(sample_item)
+        query = test_querying_table.insert().values(sample_item)
         assert await connection.fetchval(query)
 
     query = test_querying_table.select().order_by(test_querying_table.c.id)
@@ -167,7 +166,7 @@ async def test_fetch_list(test_querying_table, connection):
 
 async def test_bound_parameters(test_querying_table, connection):
     for sample_item in SAMPLE_DATA:
-        query = test_querying_table.insert(sample_item)
+        query = test_querying_table.insert().values(sample_item)
         assert await connection.fetchval(query)
 
     query = (
