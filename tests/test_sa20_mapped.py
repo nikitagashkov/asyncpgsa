@@ -13,6 +13,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from typing_extensions import Annotated
 
 import asyncpgsa
+from tests.conftest import RecreateEnumFixture, RecreateTableFixture
 
 
 class WrappedEnum:
@@ -21,14 +22,15 @@ class WrappedEnum:
         self.name = name
 
     def map_to_sa_orm(self) -> Mapped[Any]:
-        return mapped_column(
-            postgresql.ENUM(
-                self.enum_cls,
-                name=self.name,
-                # By default, SQLAlchemy uses `.name` as values for ENUMs, but we
-                # usually use `.value` everywhere.
-                values_callable=lambda obj: [e.value for e in obj],
-            )
+        return mapped_column(self.as_sa_enum())
+
+    def as_sa_enum(self) -> Mapped[Any]:
+        return postgresql.ENUM(
+            self.enum_cls,
+            name=self.name,
+            # By default, SQLAlchemy uses `.name` as values for ENUMs, but we
+            # usually use `.value` everywhere.
+            values_callable=lambda obj: [e.value for e in obj],
         )
 
     async def register_type_codec(self, conn: asyncpg.Connection) -> None:
@@ -71,21 +73,14 @@ class GuineaPig(Base):
         return cls.__table__
 
 
-async def test_crud(connection: asyncpgsa.connection.SAConnection) -> None:
+async def test_crud(
+    connection: asyncpgsa.connection.SAConnection,
+    recreate_table: RecreateTableFixture,
+    recreate_enum: RecreateEnumFixture,
+) -> None:
     # Prepare database
-    await connection.execute(sa.sql.ddl.DropTable(GuineaPig.table(), if_exists=True))
-    await connection.execute(
-        sa.text(f"DROP TYPE IF EXISTS {GuineaPigStatusWrapped.name}")
-    )
-
-    await connection.execute(
-        sa.text(
-            f"CREATE TYPE {GuineaPigStatusWrapped.name} "
-            f"AS ENUM "
-            f"({', '.join(repr(e.value) for e in GuineaPigStatusWrapped.enum_cls)})"
-        ),
-    )
-    await connection.execute(sa.sql.ddl.CreateTable(GuineaPig.table()))
+    await recreate_enum(GuineaPigStatusWrapped.as_sa_enum())
+    await recreate_table(GuineaPig.table())
 
     await GuineaPigStatusWrapped.register_type_codec(connection)
 
