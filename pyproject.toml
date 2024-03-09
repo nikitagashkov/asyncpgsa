@@ -21,8 +21,8 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
-    "asyncpg >= 0.22.0",
-    "sqlalchemy",  # FIXME: Pin to `<1.4`
+    "asyncpg >=0.22.0",
+    "sqlalchemy >=1.4",
 ]
 dynamic = ["version"]
 
@@ -43,10 +43,11 @@ include = [
 [tool.hatch.envs.default]
 python = "3.7"
 dependencies = [
-    "ruff",
     "pytest",
     "pytest-asyncio",
-    "sqlalchemy < 1.4",  # TODO: Unpin, when 1.4+ will be supported
+    "ruff",
+    "sqlalchemy >=1.4",
+    "typing-extensions",
 ]
 [tool.hatch.envs.default.scripts]
 test = "pytest ./tests -s -vvv --log-level=DEBUG"
@@ -59,8 +60,16 @@ lint = [
     "ruff --fix asyncpgsa docs tests",
 ]
 
+[tool.hatch.envs.test]
+matrix-name-format = "{variable}{value}"
+overrides.matrix.sqlalchemy.dependencies = [
+    { value = "sqlalchemy ~=1.4", if = ["1.4"] },
+    { value = "sqlalchemy ~=2.0", if = ["2.0"] },
+]
+
 [[tool.hatch.envs.test.matrix]]
 python = ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12"]
+sqlalchemy = ["1.4", "2.0"]
 
 [tool.ruff.lint]
 # For reference, see https://docs.astral.sh/ruff/rules/

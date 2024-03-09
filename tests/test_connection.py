@@ -9,6 +9,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.ddl import CreateTable, DropTable
 
 from asyncpgsa import connection
+from tests.compat import strip_bind_casts_if_lt_sa20
 
 file_table = sa.Table(
     "meows",
@@ -23,6 +24,12 @@ class NameBasedEnumType(sa.types.TypeDecorator):
 
     def __init__(self, enum_cls, **opts):
         assert issubclass(enum_cls, enum.Enum)
+
+        # https://github.com/sqlalchemy/sqlalchemy/pull/7317
+        # SQLAlchemy 2.0+ requires a name for the type. Mimic `sa.types.Enum`s
+        # behavior here.
+        opts.setdefault("name", enum_cls.__name__.lower())
+
         self._opts = opts
         self._enum_cls = enum_cls
         enums = (m.name for m in enum_cls)
@@ -56,7 +63,11 @@ def test_compile_query():
     ids = list(range(1, 4))
     query = file_table.update().values(id=None).where(file_table.c.id.in_(ids))
     q, p = connection.compile_query(query)
-    assert q == "UPDATE meows SET id=$1 WHERE meows.id IN ($2, $3, $4)"
+    assert q == strip_bind_casts_if_lt_sa20(
+        "UPDATE meows "
+        "SET id=$1 "
+        "WHERE meows.id IN ($2::INTEGER, $3::INTEGER, $4::INTEGER)"
+    )
     assert p == [None, 1, 2, 3]
 
 
@@ -70,7 +81,9 @@ def test_compile_text_query():
 def test_compile_query_with_custom_column_type():
     query = file_type_table.insert().values(type=FileTypes.PDF)
     q, p = connection.compile_query(query)
-    assert q == "INSERT INTO meows2 (type) VALUES ($1)"
+    assert q == strip_bind_casts_if_lt_sa20(
+        "INSERT INTO meows2 (type) VALUES ($1::filetypes)"
+    )
     assert p == ["PDF"]
 
 
@@ -121,7 +134,9 @@ def test_compile_jsonb_with_custom_json_encoder():
     }
     query = jsonb_table.insert().values(data=data)
     q, p = connection.compile_query(query, dialect=dialect)
-    assert q == "INSERT INTO meowsb (data) VALUES ($1)"
+    assert q == strip_bind_casts_if_lt_sa20(
+        "INSERT INTO meowsb (data) VALUES ($1::JSONB)"
+    )
     assert p == ['{"uuid4": "%s"}' % data["uuid4"]]
 
 

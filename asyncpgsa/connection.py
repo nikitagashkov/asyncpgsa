@@ -1,90 +1,93 @@
 from asyncpg import connection
 from sqlalchemy import func
-from sqlalchemy.dialects.postgresql import pypostgresql
-from sqlalchemy.sql import ClauseElement
+from sqlalchemy.dialects.postgresql import asyncpg
 from sqlalchemy.sql.ddl import DDLElement
-from sqlalchemy.sql.dml import Insert as InsertObject
-from sqlalchemy.sql.dml import Update as UpdateObject
 
 from .log import query_logger
 
 
 def get_dialect(**kwargs):
-    dialect = pypostgresql.dialect(paramstyle="pyformat", **kwargs)
-
-    dialect.implicit_returning = True
-    dialect.supports_native_enum = True
-    dialect.supports_smallserial = True  # 9.2+
-    dialect._backslash_escapes = False
-    dialect.supports_sane_multi_rowcount = True  # psycopg 2.0.9+
-    dialect._has_native_hstore = True
-
+    # TODO: Migrate to `paramstyle="numeric_dollar"` after dropping support for
+    # SQLAlchemy 1.4.
+    dialect = asyncpg.dialect(paramstyle="pyformat", **kwargs)
     return dialect
 
 
 _dialect = get_dialect()
 
 
-def execute_defaults(query):
-    if isinstance(query, InsertObject):
-        attr_name = "default"
-    elif isinstance(query, UpdateObject):
-        attr_name = "onupdate"
+def _exec_default(default, dialect):
+    # Adapted from https://github.com/sqlalchemy/sqlalchemy/blob/rel_2_0_25/lib/sqlalchemy/engine/default.py#L2113-L2126
+    # FIXME: Clause elements are not supported.
+    # FIXME: Insert sentinels are not supported.
+    if default.is_sequence:
+        return func.nextval(default.name).compile(dialect=dialect)
+    if default.is_callable:
+        # XXX: Execution context is not provided since we don't have it.
+        return default.arg({})
     else:
-        return query
-
-    # query.parameters could be a list in a multi row insert
-    if isinstance(query.parameters, list):
-        for param in query.parameters:
-            _execute_default_attr(query, param, attr_name)
-    else:
-        query.parameters = query.parameters or {}
-        _execute_default_attr(query, query.parameters, attr_name)
-    return query
+        return default.arg
 
 
-def _execute_default_attr(query, param, attr_name):
-    for col in query.table.columns:
-        attr = getattr(col, attr_name)
-        if attr and param.get(col.name) is None:
-            if attr.is_sequence:
-                param[col.name] = func.nextval(attr.name)
-            elif attr.is_scalar:
-                param[col.name] = attr.arg
-            elif attr.is_callable:
-                param[col.name] = attr.arg({})
+def execute_defaults(compiled, dialect=_dialect):
+    # We can't do it in-place because `compiled.params` is a property that
+    # returns a new dict every time it's accessed.
+    params = compiled.params.copy()
+
+    for column in compiled.insert_prefetch:
+        params[column.key] = _exec_default(column.default, dialect)
+    for column in compiled.update_prefetch:
+        params[column.key] = _exec_default(column.onupdate, dialect)
+
+    return params
 
 
 def compile_query(query, dialect=_dialect, inline=False):
     if isinstance(query, str):
         query_logger.debug(query)
         return query, ()
-    elif isinstance(query, DDLElement):
-        compiled = query.compile(dialect=dialect)
-        new_query = compiled.string
-        query_logger.debug(new_query)
-        return new_query, ()
-    elif isinstance(query, ClauseElement):
-        query = execute_defaults(query)  # default values for Insert/Update
-        compiled = query.compile(dialect=dialect)
-        compiled_params = sorted(compiled.params.items())
 
-        mapping = {
-            key: "$" + str(i) for i, (key, _) in enumerate(compiled_params, start=1)
-        }
-        new_query = compiled.string % mapping
+    compiled = query.compile(
+        dialect=dialect,
+        # https://docs.sqlalchemy.org/en/20/faq/sqlexpressions.html#rendering-postcompile-parameters-as-bound-parameters
+        compile_kwargs={"render_postcompile": True},
+    )
 
-        processors = compiled._bind_processors
-        new_params = [
-            processors[key](val) if key in processors else val
-            for key, val in compiled_params
-        ]
+    # TODO: Check via `compiled.is_ddl` after dropping support for SQLAlchemy
+    # 1.4.
+    if isinstance(query, DDLElement):
+        query_logger.debug(compiled.string)
+        return compiled.string, ()
 
-        query_logger.debug(new_query)
+    params = execute_defaults(compiled, dialect)  # Default values for Insert/Update.
 
-        if inline:
-            return new_query
-        return new_query, new_params
+    # TODO: Remove this after dropping support for SQLAlchemy 1.4 and using
+    # `paramstyle="numeric_dollar"`.
+    pyformat_to_numeric_dollar = {
+        key: f"${idx}" for idx, key in enumerate(params.keys(), start=1)
+    }
+    new_query = compiled.string % pyformat_to_numeric_dollar
+
+    # Respect custom `TypeAdapters`. XXX: Why `query.compile` doesn't do this?
+    # XXX: `_bind_processors` does not resemble public API. Is there a better
+    # way?
+    # FIXME: `processors[key]` might be tuple of processors.
+    processors = compiled._bind_processors
+    new_params = [
+        processors[key](val) if key in processors else val
+        # Python dicts are insertion ordered since 3.7+, so we can rely on the
+        # order from `query.compile`. XXX: We can mess up ordering while
+        # executing defaults?
+        for key, val in params.items()
+    ]
+
+    query_logger.debug(new_query)
+
+    if inline:
+        return new_query
+
+    # FIXME: Should return `tuple`, not `list`.
+    return new_query, new_params
 
 
 class SAConnection(connection.Connection):
@@ -92,6 +95,8 @@ class SAConnection(connection.Connection):
         super().__init__(*args, **kwargs)
         self._dialect = dialect or _dialect
 
+    # FIXME: Update type hints for public methods (asyncpg supports `query: str`
+    # only, we support `sa.sql.expression.ClauseElement`.
     def _execute(
         self,
         query,
