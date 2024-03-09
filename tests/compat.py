@@ -10,8 +10,8 @@ def strip_bind_casts_if_lt_sa20(query: str) -> str:
         return query
 
     # FIXME: Disgusting hack
-    query = query.replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ")
-    query = query.replace("TIMESTAMP WITHOUT TIME ZONE", "TIMESTAMP")
+    query = query.replace("::TIMESTAMP WITH TIME ZONE", "")
+    query = query.replace("::TIMESTAMP WITHOUT TIME ZONE", "")
     query = query.replace("::VARCHAR(60)[]", "")
     query = re.sub(r"::[a-zA-Z_]+", "", query)
 
