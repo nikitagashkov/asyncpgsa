@@ -43,10 +43,11 @@ include = [
 [tool.hatch.envs.default]
 python = "3.7"
 dependencies = [
-    "ruff",
     "pytest",
     "pytest-asyncio",
+    "ruff",
     "sqlalchemy >=1.4",
+    "typing-extensions",
 ]
 [tool.hatch.envs.default.scripts]
 test = "pytest ./tests -s -vvv --log-level=DEBUG"

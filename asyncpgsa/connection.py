@@ -16,12 +16,12 @@ def get_dialect(**kwargs):
 _dialect = get_dialect()
 
 
-def _exec_default(default):
+def _exec_default(default, dialect):
     # Adapted from https://github.com/sqlalchemy/sqlalchemy/blob/rel_2_0_25/lib/sqlalchemy/engine/default.py#L2113-L2126
     # FIXME: Clause elements are not supported.
     # FIXME: Insert sentinels are not supported.
     if default.is_sequence:
-        return func.nextval(default.name).compile(dialect=_dialect)
+        return func.nextval(default.name).compile(dialect=dialect)
     if default.is_callable:
         # XXX: Execution context is not provided since we don't have it.
         return default.arg({})
@@ -29,15 +29,15 @@ def _exec_default(default):
         return default.arg
 
 
-def execute_defaults(compiled):
+def execute_defaults(compiled, dialect=_dialect):
     # We can't do it in-place because `compiled.params` is a property that
     # returns a new dict every time it's accessed.
     params = compiled.params.copy()
 
     for column in compiled.insert_prefetch:
-        params[column.key] = _exec_default(column.default)
+        params[column.key] = _exec_default(column.default, dialect)
     for column in compiled.update_prefetch:
-        params[column.key] = _exec_default(column.onupdate)
+        params[column.key] = _exec_default(column.onupdate, dialect)
 
     return params
 
@@ -59,7 +59,7 @@ def compile_query(query, dialect=_dialect, inline=False):
         query_logger.debug(compiled.string)
         return compiled.string, ()
 
-    params = execute_defaults(compiled)  # Default values for Insert/Update.
+    params = execute_defaults(compiled, dialect)  # Default values for Insert/Update.
 
     # TODO: Remove this after dropping support for SQLAlchemy 1.4 and using
     # `paramstyle="numeric_dollar"`.
@@ -95,6 +95,8 @@ class SAConnection(connection.Connection):
         super().__init__(*args, **kwargs)
         self._dialect = dialect or _dialect
 
+    # FIXME: Update type hints for public methods (asyncpg supports `query: str`
+    # only, we support `sa.sql.expression.ClauseElement`.
     def _execute(
         self,
         query,
